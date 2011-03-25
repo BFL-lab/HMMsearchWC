@@ -1,0 +1,441 @@
+#!/usr/bin/perl -w -- -*-Perl-*-
+
+
+##############################################################################
+#
+#                                 HMMsearchWrapper
+#
+# DESCRIPTION:
+# Simple wrapper for hmmsearch in order to create AnnotPairCollection for
+# mfannot.
+#
+##############################################################################
+
+#############################################################################
+#                                 HMMsearchWrapper                                   #
+#                                                                           #
+#                          Copyright (C) 2008                               #
+#                         Departement de Biochimie,                         #
+#                          Universite de Montreal,                          #
+#                     C.P. 6128, succursale Centre-ville,                   #
+#                      Montreal, Quebec, Canada, H3C 2J7                    #
+#                                                                           #
+#                Programming:  Natacha Beck, Pierre Rioux.                  #
+#                Old version programming: David To, Thomas Hoellinger.      #
+#                Project management: Franz Lang (OGMP)                      #
+#                E-Mail information: Franz.Lang@Umontreal.ca                #
+#                                                                           #
+#     This software is distributed under the GNU GENERAL PUBLIC LICENSE, as #
+# published by the Free Software Foundation. A copy of version 2 of this    #
+# license should be included in a file called COPYING. If not, write to the #
+# Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.   #
+#############################################################################
+#
+#    $Id: HMMsearchWrapper,v 1.1 2011/03/25 22:44:14 nbeck Exp $
+#
+#    $Log: HMMsearchWrapper,v $
+#    Revision 1.1  2011/03/25 22:44:14  nbeck
+#    First commit.
+#
+#
+
+##########################
+# Initialization section #
+##########################
+
+require 5.00;
+use strict;
+use vars qw( $VERSION $RCS_VERSION $DEBUG $TMPDIR );
+use File::Basename;
+use File::Path;
+use PirObject;
+
+PirObject->LoadDataModel("HMMsearchOutput");
+PirObject->LoadDataModel("AnnotPairCollection");
+PirObject->LoadDataModel("HMMAlis_for_Ali");
+
+# Default umask
+umask 027;
+
+# Program's name and version number.
+$RCS_VERSION='$Id: HMMsearchWrapper,v 1.1 2011/03/25 22:44:14 nbeck Exp $';
+($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
+my ($BASENAME) = ($0 =~ /([^\/]+)$/);
+
+# Get login name.
+my $USER=getpwuid($<) || getlogin || die "Can't find USER from environment!\n";
+
+##################################
+# Global variables and constants #
+##################################
+
+$|=1;
+$DEBUG=0;
+my $TMPDIR="/tmp/$BASENAME.$$";
+if (! -d $TMPDIR) {
+    mkdir($TMPDIR,0700) or die "Error: can't create work directory '$TMPDIR': $!\n";
+}
+
+# Basic command-line args
+my $GENOME   ="";           # The name of a file containing a genome to search.
+my $HMM_MODEL="";           # File containing HMMmodel.
+my $L_OFFSET =0;            # Left  Offset for adjustement compared to hmm model
+my $R_OFFSET =0;            # Right Offset for adjustement compared to hmm model
+my $NAME     ="";           # Gene name
+my $OUTFILE  ="";           # Outfile
+my $COMMENT  ="";           # Comment for mfannot
+my $HMMsearch_path = "/share/supported/bin/hmmsearch3";
+my $NO_END   =0;
+
+#####################################
+# Command-Line Arguments Processing #
+#####################################
+
+for (;@ARGV;) {
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@nmglroce])(.*)$/o);
+    last if ! defined $opt;
+    if ($opt =~ /[mgnlroce]/ && $arg eq "") {
+        if (@ARGV < 2) {
+            print STDERR "Argument required for switch \"-$opt\".\n";
+            exit 1;
+        }
+        shift @ARGV;
+        $arg=$ARGV[0];
+    }
+
+    $DEBUG     =(defined($arg) ? $arg : 1) if $opt eq '@';
+    $GENOME    =$arg                       if $opt eq 'g';
+    $NAME      =$arg                       if $opt eq 'n';
+    $HMM_MODEL =$arg                       if $opt eq 'm';
+    $L_OFFSET  =$arg                       if $opt eq 'l';
+    $R_OFFSET  =$arg                       if $opt eq 'r';
+    $OUTFILE   =$arg                       if $opt eq 'o';
+    $COMMENT   =$arg                       if $opt eq 'c';
+    $NO_END    =$arg                       if $opt eq 'e';
+
+    shift @ARGV;
+}
+
+sub Usage {
+    my $message = shift || "";
+    print STDERR <<USAGE;
+Basic usage: $BASENAME 
+
+where: -g genome       : name of a FASTA file with a genome to search.
+       -n name         : gene name.
+       -m model        : name of model file used by hmmsearch.
+       -l left offset  : length of offset in 5'.
+       -r right offset : length of offset in 3'.
+
+USAGE
+    print STDERR "\n$message\n" if $message;
+    exit 20;
+}
+
+###########################################
+# Validate remaining command-line options #
+###########################################
+
+&Usage("Error: No value give for -g option\n")                                  if ($GENOME eq "");
+&Usage("Error: No value give for -n option\n")                                  if ($NAME eq "");
+&Usage("Error: the genome '$GENOME' supplied with -g is not a file\n")          if (! -f $GENOME);
+&Usage("Error: No value give for -g option\n")                                  if ($HMM_MODEL eq "");
+&Usage("Error: the model  '$HMM_MODEL' supplied with -m is not a file\n")       if (! -f $HMM_MODEL);
+
+&Usage("Error: the offset '$L_OFFSET' supplied with -l is not an integer\n")    if ($L_OFFSET =~ m/[^0-9]+/);
+&Usage("Error: the offset '$R_OFFSET' supplied with -r is not an integer\n")    if ($R_OFFSET =~ m/[^0-9]+/);
+&Usage("Error: File '$OUTFILE' give for option -o is not writable by you\n") if (-f ($OUTFILE) && (!(-w ($OUTFILE))));
+
+#####################################
+# Main                              #
+#####################################
+
+my ($FW_GENOME,$RC_GENOME,$ID2SEQ)                     = &ReverseFastaAndChangeHeader($GENOME);
+my ($RES_FILE_FW,$RES_FILE_RC,$RES_ALI_FW,$RES_ALI_RC) = &RunHMMsearch($FW_GENOME,$RC_GENOME,$HMM_MODEL);
+my ($F_APC_FW,$F_APC_RC)                               = &CreateAPC($RES_FILE_FW,$RES_FILE_RC,$RES_ALI_FW,$RES_ALI_RC,$ID2SEQ);
+my ($FULL_APC)                                         = &MakeFusionAPCs($F_APC_FW,$F_APC_RC,$ID2SEQ);
+system("cp $FULL_APC $OUTFILE");
+
+END { 
+    # With exit, programme will go here
+    # Cleanup temp directory when program exits.
+    return unless defined($TMPDIR) and $TMPDIR =~ m#^/tmp/#;
+    print "Temporary work directory $TMPDIR NOT cleaned up ...\n" if $DEBUG; 
+    rmtree($TMPDIR) unless $DEBUG;
+}
+
+#####################################
+# ReverseFasta                      #
+#####################################
+
+sub ReverseFastaAndChangeHeader {
+    my $file = shift;
+    
+    # First step read file
+    my $fh_infile  = new IO::File "<$file"
+        or die "Can't read from file '$file': $!\n";
+        
+    my ($cnt,$id2seq) = ({},{});
+    my $id      = "";
+    my $tab_seq = [];
+    while (my $line = <$fh_infile>) {
+        if ($line =~ m#^>(.*)#) {
+            if ($id ne "") {
+                push(@$tab_seq,$id2seq);
+                $id2seq = {};
+            }
+            $id = "$1";
+            $cnt->{$id}++;
+            if ($cnt->{$id} > 1) {
+                print "2 seq have same name $id\n";
+            }
+            $id2seq->{Header} = "$id";
+            next;
+        }
+        $id2seq->{Seq} .= "$line" if $id;
+    }
+    push(@$tab_seq,$id2seq); # last seq
+    $fh_infile->close();
+    
+    # Second Create new File
+    my $Seq     = "$TMPDIR/Seq";
+    my $fh_Seq = new IO::File ">$Seq"
+        or die "Can't write in file '$Seq': $!\n";
+    my $RevSeq     = "$TMPDIR/RevSeq";
+    my $fh_RevSeq = new IO::File ">$RevSeq"
+        or die "Can't write in file '$RevSeq': $!\n";
+    $id2seq = {};
+    my $num_header = 0;
+    foreach my $entry (@$tab_seq)  {
+        my $new_header = "cg_$num_header";
+        my $name       = $entry->{Header};
+        my $seq        = $entry->{Seq};
+        my $seq_wo_bl = $seq;
+           $seq_wo_bl =~ s/\s+//g;
+           
+        $id2seq->{$new_header}->{Seq} = $seq;
+        $id2seq->{$new_header}->{Length} = length($seq_wo_bl);
+        $id2seq->{$new_header}->{OriName} = $name;
+        my $rev_seq   = $seq;
+           $rev_seq   =~ tr/ACGT/TGCA/;
+           $rev_seq   = reverse $rev_seq;
+           $rev_seq   =~ s/^\n+//;
+        print $fh_Seq    ">$new_header\n$seq\n\n\n";
+        print $fh_RevSeq ">$new_header\n$rev_seq\n\n\n";
+        $num_header++;
+    }
+    
+    $fh_RevSeq->close();
+    $fh_Seq->close();
+    
+    return ($Seq,$RevSeq,$id2seq); 
+}
+
+#####################################
+# RunHMMsearch                      #
+#####################################
+
+sub RunHMMsearch {
+    my ($file_fw,$file_rc,$model) = @_;
+
+    my $output_fw = "$TMPDIR/HMMres_fw";
+    my $ali_fw    = "$TMPDIR/HMMres_fw.ali";
+    my $cmd       = "$HMMsearch_path -E 0.0001 --max -A $ali_fw -o $output_fw $model $file_fw >/dev/null 2>/dev/null";
+    print "$cmd\n" if $DEBUG;
+    my $resultat  = system("$cmd");
+    &PrintErrorSystem($resultat, "Error when proccessing Jackhmmer\n");
+    
+    my $output_rc = "$TMPDIR/HMMres_rc";
+    my $ali_rc    = "$TMPDIR/HMMres_rc.ali";
+       $cmd       = "$HMMsearch_path -E 0.0001 --max -A $ali_rc -o $output_rc $model $file_rc >/dev/null 2>/dev/null";
+    print "$cmd\n" if $DEBUG;
+       $resultat  = system("$cmd");
+    &PrintErrorSystem($resultat, "Error when proccessing Jackhmmer\n");
+    
+    return ($output_fw,$output_rc,$ali_fw,$ali_rc);
+}
+
+#####################################
+# CreateAPC                         #
+#####################################
+
+sub CreateAPC {
+    my ($infile_fw,$infile_rc,$ali_infile_fw,$ali_infile_rc,$id2seq) = @_;
+    
+    # Read evalue in order to cnt nb dash...
+    my (@fw_Info,@rc_Info);
+    for (my $i = 2; $i < 4; $i++) {
+        my $infile  = $_[$i];
+        my $isMinus = $infile eq "$ali_infile_rc" ? 0 : 1;
+        my $dir = !$isMinus ? "==>" : "<==";
+        
+        # Read HMM res.
+        my $Searchfh  = new IO::File "<$infile"
+            or die "Can't read from file '$infile': $!\n";
+        my @tab   = <$Searchfh>;
+        $Searchfh->close();
+        
+        my $HMMAlis = new PirObject::HMMAlis_for_Ali();
+           $HMMAlis->FillFeaturesFromTextOutput(\@tab);
+           
+        if ($infile eq $ali_infile_fw){
+            my $tmp_fw_Info = $HMMAlis->get_HMMalis();
+            @fw_Info = @$tmp_fw_Info;
+        }
+        if ($infile eq $ali_infile_rc){
+            my $tmp_rc_Info = $HMMAlis->get_HMMalis();
+            @rc_Info = @$tmp_rc_Info;
+        }
+    }
+    
+    # Read default output in order to keep e-value
+    my ($outfile_rc,$outfile_fw) = ("$TMPDIR/APC_rc","$TMPDIR/APC_fw");
+    for (my $i = 0; $i < 2; $i++) {
+        my $infile  = $_[$i];
+        my $isMinus = $infile eq "$infile_fw" ? 0 : 1;
+        my @Info    = !$isMinus ? @fw_Info : @rc_Info;
+        my $dir     = !$isMinus ? "==>" : "<==";
+        
+        # Read HMM res.
+        my $Searchfh  = new IO::File "<$infile"
+            or die "Can't read from file '$infile': $!\n";
+        my @tab   = <$Searchfh>;
+        $Searchfh->close();
+        
+        my $HMMRes = new PirObject::HMMsearchOutput();
+           $HMMRes->FillFeaturesFromTextOutput(\@tab);
+        my $AllHMMRes =  $HMMRes->get_Iterations()->[0]->get_resume();
+        
+        my $outfile    = !$isMinus ? $outfile_fw : $outfile_rc;
+        my $fh_outfile = new IO::File ">$outfile"
+            or die "Can't write in file '$outfile': $!\n";
+                
+
+        foreach my $Res (@$AllHMMRes) {
+            my $contig     = $Res->get_SeqIdAndDesc();
+               $contig     =~ s/\s*//g;
+            my $cg_len     = $id2seq->{$contig}->{Length};
+            my $APC = new PirObject::AnnotPairCollection(
+                          genename   => $NAME,
+                          contigname => $contig,
+                          annotpairlist => [],
+                        );
+            
+            my $alignments = $Res->get_alignments();
+            my $APs = [];
+            foreach my $num_ali (sort keys %$alignments) {
+                my $ali       = $alignments->{$num_ali};
+                my $startpos  = !$isMinus ? $ali->get_aliFrom() : $cg_len - $ali->get_aliFrom() + 1;
+                my $endpos    = !$isMinus ? $ali->get_aliTo()   : $cg_len - $ali->get_aliTo()   + 1;
+                my $startline = ";;     G-$NAME $dir start";
+                my $endline   = ";;     G-$NAME $dir end";
+                
+                my $isInInfo = 0;
+                foreach (my $i = 0; $i < @Info ; $i++) {
+                    next if !$Info[$i];
+                    next if $Info[$i]->get_header    ne $contig;
+                    next if $Info[$i]->get_start_ori ne $ali->get_aliFrom();
+                    next if $Info[$i]->get_end_ori   ne $ali->get_aliTo();
+                    $startpos = !$isMinus ? $Info[$i]->get_start : $cg_len - $Info[$i]->get_start() + 1;
+                    $endpos   = !$isMinus ? $Info[$i]->get_end   : $cg_len - $Info[$i]->get_end() + 1;
+                    $isInInfo = 1;
+                    delete $Info[$i] if $isInInfo;
+                    last if $isInInfo;
+                }
+                next if $isInInfo == 0;
+                # Adjust with offset
+                $startpos = !$isMinus ? $startpos - $L_OFFSET : $startpos + $L_OFFSET;
+                $endpos   = !$isMinus ? $endpos   + $R_OFFSET : $endpos   - $R_OFFSET;
+                $endline  = ";;" if $NO_END == 1;
+                my $AP = new PirObject::AnnotPair(
+                             type       => "C",
+                             genename   => $NAME,
+                             startpos   => $startpos,
+                             endpos     => $endpos,
+                             direction  => $dir,
+                             startline  => $startline,
+                             endline    => $endline,
+                             score      => $ali->get_Cvalue(),
+                             idbyHMM    => 1,
+                             RNAcomment => $COMMENT,
+                             );
+                push(@$APs,$AP);
+            }
+            $APC->set_annotpairlist($APs);
+            my $xml_APC = $APC->ObjectToXML();
+            print $fh_outfile $xml_APC;
+        }
+        $fh_outfile->close();
+    }
+    
+    return ($outfile_fw,$outfile_rc);
+}
+
+#####################################
+# MakeFusionAPCs                    #
+#####################################
+
+sub MakeFusionAPCs {
+    my ($f_apc_fw,$f_apc_rc,$id2seq) = @_;
+     
+    # Treat fw
+    my $Searchfh_fw  = new IO::File "<$f_apc_fw"
+            or die "Can't read from file '$f_apc_fw': $!\n";
+    my @APC_fw = PirObject->FileHandleToObject($Searchfh_fw);
+    $Searchfh_fw->close();
+
+    # Treat rc
+    my $Searchfh_rc  = new IO::File "<$f_apc_rc"
+            or die "Can't read from file '$f_apc_rc': $!\n";
+    my @APC_rc = PirObject->FileHandleToObject($Searchfh_rc);
+    $Searchfh_rc->close();
+    
+    # Make fusion between fw and rc
+    my @APCs = (@APC_fw,@APC_rc);
+    my $AllAPByCg = {};
+    foreach my $APC (@APCs) {
+        my $cg = $APC->get_contigname();
+        
+        my $AP      = $AllAPByCg->{$cg} || [];
+        my $this_AP = $APC->get_annotpairlist();
+        push(@$AP,@$this_AP);
+        $AllAPByCg->{$cg} = $AP;
+    }
+    
+    # Full APC
+    my $outfile    = "$TMPDIR/full_apc.xml";
+    my $fh_outfile = new IO::File ">$outfile"
+         or die "Can't write in file '$outfile': $!\n";
+    
+    foreach my $cg (keys %$AllAPByCg) {
+        my $AP     = $AllAPByCg->{$cg};
+        my $contig = $id2seq->{$cg}->{OriName};
+        my $APC = new PirObject::AnnotPairCollection(
+                          genename   => $NAME,
+                          contigname => $contig,
+                          annotpairlist => $AP,
+                        );
+        my $xml_APC = $APC->ObjectToXML();
+        print $fh_outfile $xml_APC;
+    }
+    $fh_outfile->close();
+    return $outfile;
+}
+
+
+#####################################
+# PrintErrorSystem                  #
+#####################################
+
+sub PrintErrorSystem {
+    my ($result,$message) = @_;
+    
+    my $hascoredump = ($result & 128) >> 7;  # 0 if no core dump, 1 if core dump
+    my $signal      = $result & 127;  # SIGNAL received by subprocess, from 0 to 127;
+    my $returncode  = $result >> 8;   # exit status of subprogram
+    if ($returncode > 1 || $signal > 0 || $hascoredump == 1) {
+        print "$message";
+    }
+}
+
+

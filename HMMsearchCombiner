@@ -1,0 +1,291 @@
+#!/usr/bin/perl -w -- -*-Perl-*-
+
+
+##############################################################################
+#
+#                                 HMMsearchCombiner
+#
+# DESCRIPTION:
+# Used to make selection of APs present in different files.
+#
+##############################################################################
+
+#############################################################################
+#                                 HMMsearchCombiner                         #
+#                                                                           #
+#                          Copyright (C) 2008                               #
+#                         Departement de Biochimie,                         #
+#                          Universite de Montreal,                          #
+#                     C.P. 6128, succursale Centre-ville,                   #
+#                      Montreal, Quebec, Canada, H3C 2J7                    #
+#                                                                           #
+#                Programming:  Natacha Beck, Pierre Rioux.                  #
+#                Old version programming: David To, Thomas Hoellinger.      #
+#                Project management: Franz Lang (OGMP)                      #
+#                E-Mail information: Franz.Lang@Umontreal.ca                #
+#                                                                           #
+#     This software is distributed under the GNU GENERAL PUBLIC LICENSE, as #
+# published by the Free Software Foundation. A copy of version 2 of this    #
+# license should be included in a file called COPYING. If not, write to the #
+# Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.   #
+#############################################################################
+#
+#    $Id: HMMsearchCombiner,v 1.1 2011/03/25 22:41:21 nbeck Exp $
+#
+#    $Log: HMMsearchCombiner,v $
+#    Revision 1.1  2011/03/25 22:41:21  nbeck
+#    First commit.
+#
+#
+
+##########################
+# Initialization section #
+##########################
+
+require 5.00;
+use strict;
+use vars qw( $VERSION $RCS_VERSION $DEBUG $TMPDIR );
+use File::Basename;
+use File::Path;
+use PirObject;
+
+PirObject->LoadDataModel("AnnotPairCollection");
+
+# Default umask
+umask 027;
+
+# Program's name and version number.
+$RCS_VERSION='$Id: HMMsearchCombiner,v 1.1 2011/03/25 22:41:21 nbeck Exp $';
+($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
+my ($BASENAME) = ($0 =~ /([^\/]+)$/);
+
+# Get login name.
+my $USER=getpwuid($<) || getlogin || die "Can't find USER from environment!\n";
+
+#################################
+# Global variables and constants #
+##################################
+
+$|=1;
+$DEBUG=0;
+my $TMPDIR="/tmp/$BASENAME.$$";
+if (! -d $TMPDIR) {
+    mkdir($TMPDIR,0700) or die "Error: can't create work directory '$TMPDIR': $!\n";
+}
+
+# Basic command-line args
+my $GENOME   = "";           # The name of a file containing a genome to search.
+my $OUTFILE  = "";           # Outfile
+my @XMLFILES = [];           # List of XML files.
+
+#####################################
+# Command-Line Arguments Processing #
+#####################################
+
+for (;@ARGV;) {
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@o])(.*)$/o);
+    last if ! defined $opt;
+    if ($opt =~ /[o]/ && $arg eq "") {
+        if (@ARGV < 2) {
+            print STDERR "Argument required for switch \"-$opt\".\n";
+            exit 1;
+        }
+        shift @ARGV;
+        $arg=$ARGV[0];
+    }
+
+    $DEBUG     =(defined($arg) ? $arg : 1) if $opt eq '@';
+    $OUTFILE   =$arg                       if $opt eq 'o';
+
+    shift @ARGV;
+}
+
+@XMLFILES=@ARGV;
+
+sub Usage {
+    my $message = shift || "";
+    print STDERR <<USAGE;
+Basic usage: $BASENAME -o output [xmlfile xmlfile...]
+
+where: -o output.
+
+USAGE
+    print STDERR "\n$message\n" if $message;
+    exit 20;
+}
+
+###########################################
+# Validate remaining command-line options #
+###########################################
+
+&Usage("Error: No value give for -o option\n")                               if ($OUTFILE eq "");
+&Usage("Error: No XML files found in command line\n")                        if (scalar(@XMLFILES) == 0);
+foreach my $file (@XMLFILES) {
+    &Usage("Error: Value '$file' is not a file\n") if ( !(-f $file));
+}
+
+#####################################
+# Main                              #
+#####################################
+
+my $ALL_APC    = &ReadAllXMLFiles(\@XMLFILES);
+&SelectBestAP($ALL_APC);
+
+#####################################
+# Subroutines                       #
+#####################################
+
+#---- ReadAllXMLFiles ----#
+
+sub ReadAllXMLFiles {
+    my $Files = shift;
+    
+    my $APCs  = [];
+    foreach my $File (@$Files) {
+        # Read back AnnotPairCollections;
+        my $infh = new IO::File "<$File"; # Which should be your %OUTFILE%
+        if (! $infh){ 
+            print "Cannot read result for '$File'; maybe there were problems with the commands?\n";
+        }
+        my @annotpaircollections = PirObject->FileHandleToObject($infh);
+        my $nb_res = scalar(@annotpaircollections);
+        print "nb res : $nb_res\n";
+        $infh->close();
+        push(@$APCs,@annotpaircollections);
+    }
+    return $APCs;
+}
+
+#---- SelectBestAP ----#
+sub SelectBestAP {
+    my $ALL_APC = shift;
+    
+    # sort AP by contig
+    my $AllAPByCg = {};
+    foreach my $APC (@$ALL_APC) {
+        my $cg       = $APC->get_contigname();
+        my $APs      = $AllAPByCg->{$cg}->{APs}  || [];
+        my $this_APs = $APC->get_annotpairlist() || [];
+        push(@$APs,@$this_APs);
+        $AllAPByCg->{$cg}->{name} = $APC->get_genename() if !$AllAPByCg->{$cg}->{name};
+        $AllAPByCg->{$cg}->{APs}  = $APs;
+    }
+    my $AllAPSelectByCg = {};
+    foreach my $cg (keys %$AllAPByCg) {
+        my $APs  = $AllAPByCg->{$cg}->{APs};
+        my $name = $AllAPByCg->{$cg}->{name};
+        if (scalar(@$APs) == 1)  {
+            $AllAPSelectByCg->{$cg} = [$name,$APs];
+            next;
+        }
+        
+        @$APs = sort { &CompareHighPrecisionFloats($a->get_score(),$b->get_score) } @$APs;
+        my $APs_select =  [];
+        for (my $i = 0; $i < @$APs; $i++) {
+            my $isOV = 0;
+            my $AP   = $APs->[$i];
+            my ($AP_start,$AP_end,$AP_dir) = ($AP->get_startpos(),$AP->get_endpos(),$AP->get_direction());
+            
+            foreach my $AP_select (@$APs_select) {
+                my ($AP_select_start,$AP_select_end,$AP_select_dir) = ($AP_select->get_startpos(),$AP_select->get_endpos(),$AP_select->get_direction());
+                $isOV = &OverlappingRegions($AP_start,$AP_end,$AP_dir,$AP_select_start,$AP_select_end,$AP_select_dir);
+                last if $isOV == 1;
+            }
+            if ($isOV == 0) {
+                push(@$APs_select,$AP);
+            }
+        }
+        $AllAPSelectByCg->{$cg} = [$name,$APs_select];
+    }
+    
+    # Write new xml fiule with selected gene
+    my $fh_outfile = new IO::File ">$OUTFILE"
+            or die "Can't write in file '$OUTFILE': $!\n";
+    foreach my $cg_name (keys %$AllAPSelectByCg) {
+        my $APs  = $AllAPSelectByCg->{$cg_name};
+        my $name = shift(@$APs);
+        my $APC  = new PirObject::AnnotPairCollection(
+                              genename   => $name,
+                              contigname => $cg_name,
+                              annotpairlist => [],
+                            );
+        $APC->set_annotpairlist(@$APs);
+        my $xml_APC = $APC->ObjectToXML();
+        print $fh_outfile $xml_APC;
+    }
+    $fh_outfile->close();
+}
+
+sub CompareHighPrecisionFloats {
+    # Only for floats that are in NORMALIZED scientific form.
+    # Examples of different cases :
+    #
+    #    1       1.      1.2
+    #    1.2e    1.2e3   1.2e-3
+    #    e-3     1e3
+    #
+    # Each of these can optionally be prefixed with "+" or "-".
+    #
+    # Unlike Math::BigFloat, this routine handles "e-3".
+
+    my ($x,$y) = @_;
+    
+    die "Unparsable number '$x'\n"
+        unless $x =~ m/^([\+\-]?)             # sign
+                        ([\d\.]*)             # significand
+                        (?:e(-?\d*))?         # exponent
+                       $/x;
+    my ($xsig,$xman,$xexp) = ($1,$2,$3);
+    
+    die "Unparsable number '$y'\n"
+        unless $y =~ m/^([\+\-]?)             # sign
+                        ([\d\.]*)             # significand
+                        (?:e(-?\d*))?         # exponent
+                       $/x;
+    my ($ysig,$yman,$yexp) = ($1,$2,$3);
+    
+    # Define missing optional components of number representation
+    $xsig ||= "+";
+    $ysig ||= "+";
+    $xman = 1 if !defined($xman) || $xman eq "";
+    $yman = 1 if !defined($yman) || $yman eq "";
+    $xexp = 0 if !defined($xexp) || $xexp eq "";
+    $yexp = 0 if !defined($yexp) || $yexp eq "";  
+    
+    # Compare numbers when $x or $y are effectively zero
+    return 0
+        if $xman == 0 && $yman == 0;  # $x == 0 and $y == 0
+    return ($xsig eq '-' ? -1 : +1)
+        if $xman != 0 && $yman == 0;  # $x != 0 and $y == 0
+    return ($ysig eq '-' ? +1 : -1)
+        if $xman == 0 && $yman != 0;  # $x == 0 and $y != 0
+    
+    # Easy comparisons when signs differ
+    if ($xsig ne $ysig) {
+        return $xsig eq '+' ? 1 : -1;
+    }
+
+    # Permutate X <=> Y if both signs are negative
+    ($xman,$xexp,$yman,$yexp) = ($yman,$yexp,$xman,$xexp)
+        if $xsig eq '-'; # $ysig is '-' too at this point.
+    
+    # At this point, $x and $y both have mantissas > 0
+    return ($xexp <=> $yexp) if $xexp != $yexp;  # $x and $y have different EXP, so compare EXP
+    return ($xman <=> $yman);                    # $x and $y have same EXP, so compare mantissas
+}
+
+# Simple case don't handle circular genome not necessary for rns/rnl
+sub OverlappingRegions {
+    # Works even for circular genomes and regions that span the gap
+    my ($start1,$end1,$dir1,$start2,$end2,$dir2) = @_;
+
+    ($start1,$end1) = ($end1,$start1) if $start1 > $end1;
+    ($start2,$end2) = ($end2,$start2) if $start2 > $end2;
+
+    # Test for overlap
+    return 1 if ! ($end1 < $start2 || $start1 > $end2);
+    
+    # Test for overlap again, new situation
+    return 0; # really, no overlap
+} # End sub
+
