@@ -12,7 +12,7 @@
 ##############################################################################
 
 #############################################################################
-#                                 HMMsearchWrapper                                   #
+#                                 HMMsearchWrapper                          #
 #                                                                           #
 #                          Copyright (C) 2008                               #
 #                         Departement de Biochimie,                         #
@@ -31,9 +31,12 @@
 # Free Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.   #
 #############################################################################
 #
-#    $Id: HMMsearchWrapper,v 1.1 2011/03/25 22:44:14 nbeck Exp $
+#    $Id: HMMsearchWrapper,v 1.2 2011/03/31 20:29:39 nbeck Exp $
 #
 #    $Log: HMMsearchWrapper,v $
+#    Revision 1.2  2011/03/31 20:29:39  nbeck
+#    Fixed jonction and comments.
+#
 #    Revision 1.1  2011/03/25 22:44:14  nbeck
 #    First commit.
 #
@@ -58,7 +61,7 @@ PirObject->LoadDataModel("HMMAlis_for_Ali");
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: HMMsearchWrapper,v 1.1 2011/03/25 22:44:14 nbeck Exp $';
+$RCS_VERSION='$Id: HMMsearchWrapper,v 1.2 2011/03/31 20:29:39 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -92,7 +95,7 @@ my $NO_END   =0;
 #####################################
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@nmglroce])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([dnmglroce])(.*)$/o);
     last if ! defined $opt;
     if ($opt =~ /[mgnlroce]/ && $arg eq "") {
         if (@ARGV < 2) {
@@ -103,7 +106,7 @@ for (;@ARGV;) {
         $arg=$ARGV[0];
     }
 
-    $DEBUG     =(defined($arg) ? $arg : 1) if $opt eq '@';
+    $DEBUG     =1                          if $opt eq 'd';
     $GENOME    =$arg                       if $opt eq 'g';
     $NAME      =$arg                       if $opt eq 'n';
     $HMM_MODEL =$arg                       if $opt eq 'm';
@@ -261,6 +264,7 @@ sub RunHMMsearch {
 
 sub CreateAPC {
     my ($infile_fw,$infile_rc,$ali_infile_fw,$ali_infile_rc,$id2seq) = @_;
+    my $comment = $COMMENT;
     
     # Read evalue in order to cnt nb dash...
     my (@fw_Info,@rc_Info);
@@ -304,7 +308,8 @@ sub CreateAPC {
         
         my $HMMRes = new PirObject::HMMsearchOutput();
            $HMMRes->FillFeaturesFromTextOutput(\@tab);
-        my $AllHMMRes =  $HMMRes->get_Iterations()->[0]->get_resume();
+        my $AllHMMRes = $HMMRes->get_Iterations()->[0]->get_resume();
+        my $modelSize = $HMMRes->get_Iterations()->[0]->get_ModelSize();
         
         my $outfile    = !$isMinus ? $outfile_fw : $outfile_rc;
         my $fh_outfile = new IO::File ">$outfile"
@@ -327,8 +332,8 @@ sub CreateAPC {
                 my $ali       = $alignments->{$num_ali};
                 my $startpos  = !$isMinus ? $ali->get_aliFrom() : $cg_len - $ali->get_aliFrom() + 1;
                 my $endpos    = !$isMinus ? $ali->get_aliTo()   : $cg_len - $ali->get_aliTo()   + 1;
-                my $startline = ";;     G-$NAME $dir start";
-                my $endline   = ";;     G-$NAME $dir end";
+                my $startline = ";;     $NAME $dir";
+                my $endline   = ";;     $NAME $dir";
                 
                 my $isInInfo = 0;
                 foreach (my $i = 0; $i < @Info ; $i++) {
@@ -344,9 +349,17 @@ sub CreateAPC {
                 }
                 next if $isInInfo == 0;
                 # Adjust with offset
-                $startpos = !$isMinus ? $startpos - $L_OFFSET : $startpos + $L_OFFSET;
-                $endpos   = !$isMinus ? $endpos   + $R_OFFSET : $endpos   - $R_OFFSET;
+                $startpos = !$isMinus ? $startpos - ($ali->get_hmmFrom()-1) : $startpos + ($ali->get_hmmFrom()-1);
+                $endpos   = !$isMinus ? $endpos   + ($modelSize - $ali->get_hmmTo())  : $endpos   - ($modelSize - $ali->get_hmmTo());
                 $endline  = ";;" if $NO_END == 1;
+                if ($COMMENT =~ m/5\'/) {
+                    $endline = ";;";
+                }
+                if ($COMMENT =~ m/3\'/) {
+                    $startline = ";;";
+                    $endline   = "$endline ;; mfannot: $COMMENT";
+                    $comment   = "";
+                }
                 my $AP = new PirObject::AnnotPair(
                              type       => "C",
                              genename   => $NAME,
@@ -357,7 +370,7 @@ sub CreateAPC {
                              endline    => $endline,
                              score      => $ali->get_Cvalue(),
                              idbyHMM    => 1,
-                             RNAcomment => $COMMENT,
+                             RNAcomment => $comment,
                              );
                 push(@$APs,$AP);
             }
