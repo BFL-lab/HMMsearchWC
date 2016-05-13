@@ -65,6 +65,10 @@ PirObject->LoadDataModel("HMMAlis_for_Ali");
 
 # Default umask
 umask 027;
+# Default path
+my $PATH = $ENV{"PATH"} || "";
+my @PATH = split(/:/, $PATH);
+
 
 # Program's name and version number.
 $RCS_VERSION='$Id: HMMsearchWrapper,v 1.4 2011/12/28 16:14:54 nbeck Exp $';
@@ -93,7 +97,7 @@ my $R_OFFSET =0;            # Right Offset for adjustement compared to hmm model
 my $NAME     ="";           # Gene name
 my $OUTFILE  ="";           # Outfile
 my $COMMENT  ="";           # Comment for mfannot
-my $HMMsearch_path = "/share/supported/bin/hmmsearch3";
+my $HMMsearch_path = &GetPath("hmmsearch");
 my $NO_END   =0;
 
 #####################################
@@ -139,6 +143,29 @@ where: -g genome       : name of a FASTA file with a genome to search.
 USAGE
     print STDERR "\n$message\n" if $message;
     exit 20;
+}
+
+###########################################
+# Search for program                      #
+###########################################
+
+sub GetPath {
+  my $name_prog = shift;
+    
+  foreach my $dir (@PATH) {
+    if (-f "$dir/$name_prog") {
+      if (-r _ && -x _) { 
+        return "$dir/$name_prog";
+      }
+      else {
+        die "   -> ERROR: $name_prog is not readable and executable! Please run:\n",
+            "             chmod 755 \"$dir/ $name_prog\"\n";
+      }
+    last;
+    }
+  }    
+  die "-> ERROR: Could not find '$name_prog' in your search path. Please install\n",
+      "   $name_prog from the source (see INSTALL.txt).\n";
 }
 
 ###########################################
