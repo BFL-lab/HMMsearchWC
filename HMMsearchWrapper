@@ -114,7 +114,7 @@ for (;@ARGV;) {
 sub Usage {
     my $message = shift || "";
     print STDERR <<USAGE;
-Basic usage: $BASENAME 
+Basic usage: $BASENAME
 
 where: -g genome       : name of a FASTA file with a genome to search.
        -n name         : gene name.
@@ -133,10 +133,10 @@ USAGE
 
 sub GetPath {
   my $name_prog = shift;
-    
+
   foreach my $dir (@PATH) {
     if (-f "$dir/$name_prog") {
-      if (-r _ && -x _) { 
+      if (-r _ && -x _) {
         return "$dir/$name_prog";
       }
       else {
@@ -145,7 +145,7 @@ sub GetPath {
       }
     last;
     }
-  }    
+  }
   die "-> ERROR: Could not find '$name_prog' in your search path. Please install\n",
       "   $name_prog from the source (see INSTALL.txt).\n";
 }
@@ -157,7 +157,7 @@ sub GetPath {
 &Usage("Error: No value give for -g option\n")                                  if ($GENOME eq "");
 &Usage("Error: No value give for -n option\n")                                  if ($NAME eq "");
 &Usage("Error: the genome '$GENOME' supplied with -g is not a file\n")          if (! -f $GENOME);
-&Usage("Error: No value give for -g option\n")                                  if ($HMM_MODEL eq "");
+&Usage("Error: No value give for -m option\n")                                  if ($HMM_MODEL eq "");
 &Usage("Error: the model  '$HMM_MODEL' supplied with -m is not a file\n")       if (! -f $HMM_MODEL);
 
 &Usage("Error: the offset '$L_OFFSET' supplied with -l is not an integer\n")    if ($L_OFFSET =~ m/[^0-9]+/);
@@ -174,11 +174,11 @@ my ($F_APC_FW,$F_APC_RC)                               = &CreateAPC($RES_FILE_FW
 my ($FULL_APC)                                         = &MakeFusionAPCs($F_APC_FW,$F_APC_RC,$ID2SEQ);
 system("cp $FULL_APC $OUTFILE");
 
-END { 
+END {
     # With exit, programme will go here
     # Cleanup temp directory when program exits.
     return unless defined($TMPDIR) and $TMPDIR =~ m#^/tmp/#;
-    print "Temporary work directory $TMPDIR NOT cleaned up ...\n" if $DEBUG; 
+    print "Temporary work directory $TMPDIR NOT cleaned up ...\n" if $DEBUG;
     rmtree($TMPDIR) unless $DEBUG;
 }
 
@@ -188,11 +188,11 @@ END {
 
 sub ReverseFastaAndChangeHeader {
     my $file = shift;
-    
+
     # First step read file
     my $fh_infile  = new IO::File "<$file"
         or die "Can't read from file '$file': $!\n";
-        
+
     my ($cnt,$id2seq) = ({},{});
     my $id      = "";
     my $tab_seq = [];
@@ -214,7 +214,7 @@ sub ReverseFastaAndChangeHeader {
     }
     push(@$tab_seq,$id2seq); # last seq
     $fh_infile->close();
-    
+
     # Second Create new File
     my $Seq     = "$TMPDIR/Seq";
     my $fh_Seq = new IO::File ">$Seq"
@@ -230,7 +230,7 @@ sub ReverseFastaAndChangeHeader {
         my $seq        = $entry->{Seq};
         my $seq_wo_bl = $seq;
            $seq_wo_bl =~ s/\s+//g;
-           
+
         $id2seq->{$new_header}->{Seq} = $seq;
         $id2seq->{$new_header}->{Length} = length($seq_wo_bl);
         $id2seq->{$new_header}->{OriName} = $name;
@@ -242,11 +242,11 @@ sub ReverseFastaAndChangeHeader {
         print $fh_RevSeq ">$new_header\n$rev_seq\n\n\n";
         $num_header++;
     }
-    
+
     $fh_RevSeq->close();
     $fh_Seq->close();
-    
-    return ($Seq,$RevSeq,$id2seq); 
+
+    return ($Seq,$RevSeq,$id2seq);
 }
 
 #####################################
@@ -262,14 +262,14 @@ sub RunHMMsearch {
     print "$cmd\n" if $DEBUG;
     my $resultat  = system("$cmd");
     &PrintErrorSystem($resultat, "Error when proccessing Jackhmmer\n");
-    
+
     my $output_rc = "$TMPDIR/HMMres_rc";
     my $ali_rc    = "$TMPDIR/HMMres_rc.ali";
        $cmd       = "nice -19 $HMMsearch_path -E 0.0001 --max -A $ali_rc -o $output_rc $model $file_rc >/dev/null 2>/dev/null";
     print "$cmd\n" if $DEBUG;
-       $resultat  = system("$cmd");
+    $resultat  = system("$cmd");
     &PrintErrorSystem($resultat, "Error when proccessing Jackhmmer\n");
-    
+
     return ($output_fw,$output_rc,$ali_fw,$ali_rc);
 }
 
@@ -280,23 +280,23 @@ sub RunHMMsearch {
 sub CreateAPC {
     my ($infile_fw,$infile_rc,$ali_infile_fw,$ali_infile_rc,$id2seq) = @_;
     my $comment = $COMMENT;
-    
+
     # Read evalue in order to cnt nb dash...
     my (@fw_Info,@rc_Info);
     for (my $i = 2; $i < 4; $i++) {
         my $infile  = $_[$i];
         my $isMinus = $infile eq "$ali_infile_rc" ? 0 : 1;
         my $dir = !$isMinus ? "==>" : "<==";
-        
+
         # Read HMM res.
         my $Searchfh  = new IO::File "<$infile"
             or die "Can't read from file '$infile': $!\n";
         my @tab   = <$Searchfh>;
         $Searchfh->close();
-        
+
         my $HMMAlis = new PirObject::HMMAlis_for_Ali();
            $HMMAlis->FillFeaturesFromTextOutput(\@tab);
-           
+
         if ($infile eq $ali_infile_fw){
             my $tmp_fw_Info = $HMMAlis->get_HMMalis();
             @fw_Info = @$tmp_fw_Info;
@@ -306,7 +306,7 @@ sub CreateAPC {
             @rc_Info = @$tmp_rc_Info;
         }
     }
-    
+
     # Read default output in order to keep e-value
     my ($outfile_rc,$outfile_fw) = ("$TMPDIR/APC_rc","$TMPDIR/APC_fw");
     for (my $i = 0; $i < 2; $i++) {
@@ -314,22 +314,22 @@ sub CreateAPC {
         my $isMinus = $infile eq "$infile_fw" ? 0 : 1;
         my @Info    = !$isMinus ? @fw_Info : @rc_Info;
         my $dir     = !$isMinus ? "==>" : "<==";
-        
+
         # Read HMM res.
         my $Searchfh  = new IO::File "<$infile"
             or die "Can't read from file '$infile': $!\n";
         my @tab   = <$Searchfh>;
         $Searchfh->close();
-        
+
         my $HMMRes = new PirObject::HMMsearchOutput();
            $HMMRes->FillFeaturesFromTextOutput(\@tab);
         my $AllHMMRes = $HMMRes->get_Iterations()->[0]->get_resume();
         my $modelSize = $HMMRes->get_Iterations()->[0]->get_ModelSize();
-        
+
         my $outfile    = !$isMinus ? $outfile_fw : $outfile_rc;
         my $fh_outfile = new IO::File ">$outfile"
             or die "Can't write in file '$outfile': $!\n";
-                
+
 
         foreach my $Res (@$AllHMMRes) {
             my $contig     = $Res->get_SeqIdAndDesc();
@@ -340,16 +340,17 @@ sub CreateAPC {
                           contigname => $contig,
                           annotpairlist => [],
                         );
-            
+
             my $alignments = $Res->get_alignments();
             my $APs = [];
             foreach my $num_ali (sort keys %$alignments) {
                 my $ali       = $alignments->{$num_ali};
+                my $cvalue    = $ali->get_Cvalue();
                 my $startpos  = !$isMinus ? $ali->get_aliFrom() : $cg_len - $ali->get_aliFrom() + 1;
                 my $endpos    = !$isMinus ? $ali->get_aliTo()   : $cg_len - $ali->get_aliTo()   + 1;
-                my $startline = ";;     $NAME $dir";
-                my $endline   = ";;     $NAME $dir";
-                
+		my $startline = ";;     $NAME $dir start";
+                my $endline   = ";;     $NAME $dir end";
+
                 my $isInInfo = 0;
                 foreach (my $i = 0; $i < @Info ; $i++) {
                     next if !$Info[$i];
@@ -366,17 +367,9 @@ sub CreateAPC {
                 # Adjust with offset
                 $startpos = !$isMinus ? $startpos - ($ali->get_hmmFrom()-1) - $L_OFFSET : $startpos + ($ali->get_hmmFrom()-1) + $L_OFFSET;
                 $endpos   = !$isMinus ? $endpos   + ($modelSize - $ali->get_hmmTo()) + $R_OFFSET : $endpos   - ($modelSize - $ali->get_hmmTo()) - $R_OFFSET;
-                $endline  = ";;" if $NO_END == 1;
-                if ($COMMENT =~ m/5\'/) {
-                    $endline = ";;";
-                }
-                if ($COMMENT =~ m/3\'/) {
-                    $startline = ";;";
-                    $endline   = "$endline ;; mfannot: $COMMENT";
-                    $comment   = "";
-                }
-                my $AP = new PirObject::AnnotPair(
-                             type       => "C",
+
+		my $AP = new PirObject::AnnotPair(
+                             type       => "G",
                              genename   => $NAME,
                              startpos   => $startpos,
                              endpos     => $endpos,
@@ -385,7 +378,7 @@ sub CreateAPC {
                              endline    => $endline,
                              score      => $ali->get_Cvalue(),
                              idbyHMM    => 1,
-                             RNAcomment => $comment,
+			     RNAcomment => "$COMMENT, HMM evalue: $cvalue",
                              );
                 push(@$APs,$AP);
             }
@@ -395,7 +388,7 @@ sub CreateAPC {
         }
         $fh_outfile->close();
     }
-    
+
     return ($outfile_fw,$outfile_rc);
 }
 
@@ -405,7 +398,7 @@ sub CreateAPC {
 
 sub MakeFusionAPCs {
     my ($f_apc_fw,$f_apc_rc,$id2seq) = @_;
-     
+
     # Treat fw
     my $Searchfh_fw  = new IO::File "<$f_apc_fw"
             or die "Can't read from file '$f_apc_fw': $!\n";
@@ -417,24 +410,24 @@ sub MakeFusionAPCs {
             or die "Can't read from file '$f_apc_rc': $!\n";
     my @APC_rc = PirObject->FileHandleToObject($Searchfh_rc);
     $Searchfh_rc->close();
-    
+
     # Make fusion between fw and rc
     my @APCs = (@APC_fw,@APC_rc);
     my $AllAPByCg = {};
     foreach my $APC (@APCs) {
         my $cg = $APC->get_contigname();
-        
+
         my $AP      = $AllAPByCg->{$cg} || [];
         my $this_AP = $APC->get_annotpairlist();
         push(@$AP,@$this_AP);
         $AllAPByCg->{$cg} = $AP;
     }
-    
+
     # Full APC
     my $outfile    = "$TMPDIR/full_apc.xml";
     my $fh_outfile = new IO::File ">$outfile"
          or die "Can't write in file '$outfile': $!\n";
-    
+
     foreach my $cg (keys %$AllAPByCg) {
         my $AP     = $AllAPByCg->{$cg};
         my $contig = $id2seq->{$cg}->{OriName};
@@ -457,7 +450,7 @@ sub MakeFusionAPCs {
 
 sub PrintErrorSystem {
     my ($result,$message) = @_;
-    
+
     my $hascoredump = ($result & 128) >> 7;  # 0 if no core dump, 1 if core dump
     my $signal      = $result & 127;  # SIGNAL received by subprocess, from 0 to 127;
     my $returncode  = $result >> 8;   # exit status of subprogram
